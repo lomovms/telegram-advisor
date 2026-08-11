@@ -1252,7 +1252,15 @@ function AdvisorApp() {
   }
 
   return (
-    <main className={`app-shell mobile-view-${mobileView} h-screen min-h-[640px] overflow-hidden bg-ink text-slate-100`} onClick={() => { setContextMenu(null); setDraftMenu(null); }}>
+    <main
+      className={`app-shell mobile-view-${mobileView} h-screen min-h-[640px] overflow-hidden bg-ink text-slate-100`}
+      onPointerDownCapture={(event) => {
+        if (event.button !== 0 || (event.target instanceof Element && event.target.closest(".context-menu"))) return;
+        setContextMenu(null);
+        setDraftMenu(null);
+      }}
+      onClick={() => { setContextMenu(null); setDraftMenu(null); }}
+    >
       <Group
         orientation="horizontal"
         className="app-group h-full"
