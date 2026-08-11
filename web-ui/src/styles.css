@@ -8,6 +8,18 @@ body { margin: 0; min-width: 900px; }
 button, input, textarea, select { font: inherit; }
 button:disabled { cursor: not-allowed; opacity: .45; }
 
+.desktop-window { display: flex; height: 100vh; min-height: 640px; flex-direction: column; overflow: hidden; background: #0c141d; }
+.desktop-window-content { min-height: 0; flex: 1; }
+.desktop-window-content > .app-shell, .desktop-window-content > .startup-screen { height: 100%; min-height: 0; }
+.desktop-window-content > .onboarding-shell { min-height: 100%; }
+.app-titlebar { display: flex; height: 34px; flex: 0 0 34px; align-items: center; justify-content: space-between; border-bottom: 1px solid #1f3140; background: #253445; color: #b9c7d6; user-select: none; }
+.app-titlebar-brand { display: flex; min-width: 0; align-items: center; gap: 8px; padding-left: 12px; font-size: 12px; font-weight: 600; }
+.app-titlebar-brand svg { color: #5db7ed; }
+.app-titlebar-actions { display: flex; align-self: stretch; }
+.app-titlebar-button { display: inline-flex; width: 46px; align-items: center; justify-content: center; color: #a8b9c9; transition: background-color .12s ease, color .12s ease; }
+.app-titlebar-button:hover { background: #344a5d; color: #f8fafc; }
+.app-titlebar-button.close:hover { background: #d84f4f; color: #fff; }
+
 .startup-screen { @apply flex h-screen items-center justify-center gap-4 bg-[#0c141d] text-slate-100; }
 .onboarding-shell { @apply min-h-screen overflow-y-auto bg-[#0c141d] px-6 py-8 text-slate-100; }
 .onboarding-panel { @apply mx-auto max-w-5xl rounded-lg border border-line bg-[#101c28] shadow-2xl; }
@@ -179,6 +191,9 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 
 @media (max-width: 720px) {
   body { min-width: 0; overflow: hidden; }
+  .desktop-window { min-height: 0; }
+  .desktop-window-content { height: 100dvh; }
+  .app-titlebar { display: none; }
   .app-shell { min-height: 0; height: 100dvh; }
   .app-group { position: relative; display: block !important; }
   .app-group > .mobile-panel { position: absolute !important; inset: 0; width: 100% !important; height: 100% !important; flex: none !important; }

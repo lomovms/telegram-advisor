@@ -8,8 +8,10 @@ import {
   ChevronDown,
   Clipboard,
   LoaderCircle,
+  Maximize2,
   Menu,
   MessageSquareText,
+  Minus,
   Pencil,
   MoreHorizontal,
   PanelRight,
@@ -106,11 +108,35 @@ export default function App() {
     };
   }, []);
 
-  if (!bootstrap) return <StartupScreen error={bootstrapError} />;
+  if (!bootstrap) return <DesktopWindow><StartupScreen error={bootstrapError} /></DesktopWindow>;
   if (bootstrap.required && !bootstrap.complete) {
-    return <Onboarding initial={bootstrap} onReady={setBootstrap} />;
+    return <DesktopWindow><Onboarding initial={bootstrap} onReady={setBootstrap} /></DesktopWindow>;
   }
-  return <AdvisorApp />;
+  return <DesktopWindow><AdvisorApp /></DesktopWindow>;
+}
+
+function DesktopWindow({ children }: { children: React.ReactNode }) {
+  if (!isTauriApp) return <>{children}</>;
+  return <div className="desktop-window"><AppTitleBar /><div className="desktop-window-content">{children}</div></div>;
+}
+
+function AppTitleBar() {
+  const windowRef = getCurrentWindow();
+  const run = (action: () => Promise<void>) => void action().catch(() => undefined);
+  return <header
+    className="app-titlebar"
+    data-tauri-drag-region
+    onDoubleClick={(event) => {
+      if (!(event.target instanceof Element && event.target.closest("button"))) run(() => windowRef.toggleMaximize());
+    }}
+  >
+    <div className="app-titlebar-brand" data-tauri-drag-region><MessageSquareText size={15} /> Telegram Advisor</div>
+    <div className="app-titlebar-actions">
+      <button type="button" className="app-titlebar-button" title="Свернуть" aria-label="Свернуть" onClick={() => run(() => windowRef.minimize())}><Minus size={16} /></button>
+      <button type="button" className="app-titlebar-button" title="Развернуть" aria-label="Развернуть" onClick={() => run(() => windowRef.toggleMaximize())}><Maximize2 size={14} /></button>
+      <button type="button" className="app-titlebar-button close" title="Закрыть" aria-label="Закрыть" onClick={() => run(() => windowRef.close())}><X size={16} /></button>
+    </div>
+  </header>;
 }
 
 function AdvisorApp() {
