@@ -2,6 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type K
 import {
   Bot,
   ArrowLeft,
+  BookOpenText,
   Briefcase,
   CheckCircle2,
   ChevronDown,
@@ -9,6 +10,7 @@ import {
   LoaderCircle,
   Menu,
   MessageSquareText,
+  Pencil,
   MoreHorizontal,
   PanelRight,
   Plus,
@@ -29,9 +31,9 @@ import {
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
-import { api, apiUrl, type Account, type Analysis, type AnalysisModel, type AssistantRole, type AppSettings, type CrmLead, type CrmTaskPreview, type GmailAccount, type GmailContact, type GmailContactLabelStatus, type GoogleContactGroup, type MaxContact, type Message, type OnboardingStatus, type Profile, type ProfileDetail, type TelegramAuthStatus } from "./api";
+import { api, apiUrl, type Account, type Analysis, type AnalysisModel, type AssistantRole, type AppSettings, type CrmLead, type CrmTaskPreview, type GmailAccount, type GmailContact, type GmailContactLabelStatus, type GoogleContactGroup, type MaxContact, type MemoryItem, type Message, type OnboardingStatus, type Profile, type ProfileDetail, type TelegramAuthStatus, type WorkingMemory, type WorkProfile } from "./api";
 
-type Tab = "reply" | "soft" | "hard" | "strategy" | "profile" | "style";
+type Tab = "reply" | "soft" | "hard" | "strategy" | "memory" | "profile" | "work_profile" | "style";
 type Source = Account | "gmail" | "max";
 type RewriteMode = "my_style" | "formal" | "soft" | "hard" | "short" | "correct";
 type RewriteEditorState = {
@@ -48,7 +50,9 @@ const tabs: Array<{ id: Tab; label: string }> = [
   { id: "soft", label: "Мягко" },
   { id: "hard", label: "Жёстко" },
   { id: "strategy", label: "Разбор" },
+  { id: "memory", label: "Память" },
   { id: "profile", label: "Профиль" },
+  { id: "work_profile", label: "Рабочий" },
   { id: "style", label: "Стиль" },
 ];
 
@@ -61,6 +65,18 @@ const rewriteModes: Array<{ id: RewriteMode; label: string }> = [
   { id: "correct", label: "Исправить" },
 ];
 const isTauriApp = "__TAURI_INTERNALS__" in window;
+const emptyWorkProfile: WorkProfile = {
+  id: 1,
+  about: "",
+  skills: "",
+  base_rate: 0,
+  minimum_order: 0,
+  pricing_rules: "",
+  risk_rules: "",
+  style: "",
+  boundaries: "",
+  updated_at: "",
+};
 
 export default function App() {
   const [bootstrap, setBootstrap] = useState<OnboardingStatus | null>(null);
@@ -104,6 +120,8 @@ function AdvisorApp() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<ProfileDetail | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [workingMemory, setWorkingMemory] = useState<WorkingMemory | null>(null);
+  const [workProfile, setWorkProfile] = useState<WorkProfile>(emptyWorkProfile);
   const [tab, setTab] = useState<Tab>("reply");
   const [tone, setTone] = useState("мой стиль");
   const [analysisModel, setAnalysisModel] = useState<AnalysisModel["id"]>("gpt-5.6-luna");
@@ -250,6 +268,7 @@ function AdvisorApp() {
     setSource(next);
     setDetail(null);
     setAnalysis(null);
+    setWorkingMemory(null);
     setProfiles(cachedProfiles);
     setSelectedId((current) => cachedProfiles.some((profile) => profile.id === current) ? current : cachedProfiles[0]?.id ?? null);
     setMobileView("list");
@@ -273,6 +292,76 @@ function AdvisorApp() {
       if (!quiet) setComment(payload.conversation_goal);
     } catch (requestError) {
       if (!quiet) setError(messageFrom(requestError));
+    }
+  }
+
+  async function loadWorkingMemory(profileId: number) {
+    try {
+      setWorkingMemory(await api.workingMemory(profileId));
+    } catch (requestError) {
+      setError(messageFrom(requestError));
+    }
+  }
+
+  async function syncWorkingMemory() {
+    if (!selectedId) return;
+    setPending("working-memory");
+    setError("");
+    try {
+      setWorkingMemory(await api.updateWorkingMemory(selectedId));
+    } catch (requestError) {
+      setError(messageFrom(requestError));
+    } finally {
+      setPending("");
+    }
+  }
+
+  async function updateMemoryItem(item: MemoryItem, changes: Partial<MemoryItem>) {
+    try {
+      await api.updateMemoryItem(item.id, changes);
+      if (selectedId) await loadWorkingMemory(selectedId);
+    } catch (requestError) {
+      setError(messageFrom(requestError));
+    }
+  }
+
+  async function editMemoryItem(item: MemoryItem) {
+    const title = window.prompt("Исправить формулировку", item.title)?.trim();
+    if (!title || title === item.title) return;
+    await updateMemoryItem(item, { title });
+  }
+
+  async function deleteMemoryItem(item: MemoryItem) {
+    if (!window.confirm(`Удалить из рабочей памяти: «${item.title}»?`)) return;
+    try {
+      await api.deleteMemoryItem(item.id);
+      if (selectedId) await loadWorkingMemory(selectedId);
+    } catch (requestError) {
+      setError(messageFrom(requestError));
+    }
+  }
+
+  async function openMemorySource(messageId: number | null | undefined) {
+    if (!selectedId || !messageId) return;
+    try {
+      const payload = await api.messagesAround(selectedId, messageId);
+      setDetail((current) => current ? { ...current, messages: mergeMessageHistory(current.messages, payload.messages) } : current);
+      setMobileView("chat");
+      window.setTimeout(() => document.getElementById(`message-${messageId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
+    } catch (requestError) {
+      setError(messageFrom(requestError));
+    }
+  }
+
+  async function saveWorkProfile() {
+    setPending("work-profile");
+    setError("");
+    try {
+      setWorkProfile(await api.saveWorkProfile(workProfile));
+    } catch (requestError) {
+      setError(messageFrom(requestError));
+    } finally {
+      setPending("");
     }
   }
 
@@ -352,7 +441,9 @@ function AdvisorApp() {
     if (!selectedId) return;
     setDetail(null);
     setAnalysis(null);
+    setWorkingMemory(null);
     void loadDetail(selectedId);
+    void loadWorkingMemory(selectedId);
     const focusTimer = window.setTimeout(() => composerRef.current?.focus(), 180);
     const timer = window.setInterval(() => void loadDetail(selectedId, true), 500);
     return () => {
@@ -385,6 +476,7 @@ function AdvisorApp() {
       setMaxConnected(payload.max_connected);
       setMaxBotName(payload.max_bot_name);
     }).catch(() => undefined);
+    void api.workProfile().then(setWorkProfile).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -1384,7 +1476,7 @@ function AdvisorApp() {
             </header>
 
             <div className="tab-strip shrink-0 overflow-x-auto border-b border-line px-3">
-              {tabs.filter((item) => (source === "gmail" || source === "max") ? !["profile", "style"].includes(item.id) : true).map((item) => <button key={item.id} data-tab={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>{item.label}</button>)}
+              {tabs.filter((item) => (source === "gmail" || source === "max") ? !["memory", "profile", "work_profile", "style"].includes(item.id) : true).map((item) => <button key={item.id} data-tab={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>{item.label}</button>)}
               <button title="Открыть CRM: проекты и оплата" onClick={() => void openCrm()}><Briefcase size={13} className="mr-1 inline" />CRM</button>
             </div>
 
@@ -1413,7 +1505,20 @@ function AdvisorApp() {
                 setNotificationChat={setNotificationChat}
                 testNotifications={() => void testNotifications()}
                 saveStyle={() => void saveStyle()}
-              /></> : <>
+              /></> : tab === "memory" ? <WorkingMemoryPanel
+                memory={workingMemory}
+                pending={pending === "working-memory"}
+                onSync={() => void syncWorkingMemory()}
+                onEdit={(item) => void editMemoryItem(item)}
+                onUpdate={(item, changes) => void updateMemoryItem(item, changes)}
+                onDelete={(item) => void deleteMemoryItem(item)}
+                onOpenSource={(messageId) => void openMemorySource(messageId)}
+              /> : tab === "work_profile" ? <WorkProfilePanel
+                profile={workProfile}
+                pending={pending === "work-profile"}
+                onChange={setWorkProfile}
+                onSave={() => void saveWorkProfile()}
+              /> : <>
               {!['profile', 'style'].includes(tab) && <ContextSummary analysis={analysis} detail={detail} fallbackTone={tone} fallbackGoal={comment} fallbackRole={assistantRoles.find((item) => item.id === assistantRole)?.label ?? assistantRole} />}
               <AiTab
                 tab={tab}
@@ -1448,7 +1553,7 @@ function AdvisorApp() {
                 <button className="secondary-button" onClick={() => void navigator.clipboard.writeText(gmailReplyDraft)} disabled={!gmailReplyDraft.trim()}><Clipboard size={15} /> Copy</button>
                 <button className="primary-button" onClick={() => void sendGmail(gmailReplyDraft)} disabled={!gmailCanSend || !selectedGmailContact || !gmailReplyDraft.trim() || Boolean(pending)}>{pending === "gmail-send" ? <LoaderCircle size={15} className="animate-spin" /> : <SendHorizontal size={15} />} Отправить</button>
               </div>
-            </div> : source === "max" ? <div className="shrink-0 border-t border-line p-4"><label className="mb-2 block text-xs font-medium text-slate-300">Цель / комментарий</label><textarea className="comment-input" rows={2} value={maxBrief} onChange={(event) => setMaxBrief(event.target.value)} placeholder="Необязательно. Например: уточнить задачу и предложить созвон" /><div className="mt-3 flex justify-end gap-2"><button className="secondary-button" onClick={() => void navigator.clipboard.writeText(maxReplyDraft)} disabled={!maxReplyDraft.trim()}><Clipboard size={15} /> Copy</button><button className="primary-button" onClick={() => void sendMax(maxReplyDraft)} disabled={!selectedMaxContact || !maxReplyDraft.trim() || Boolean(pending)}>{pending === "max-send" ? <LoaderCircle size={15} className="animate-spin" /> : <SendHorizontal size={15} />} Отправить</button></div></div> : <div className="shrink-0 border-t border-line p-4">
+            </div> : source === "max" ? <div className="shrink-0 border-t border-line p-4"><label className="mb-2 block text-xs font-medium text-slate-300">Цель / комментарий</label><textarea className="comment-input" rows={2} value={maxBrief} onChange={(event) => setMaxBrief(event.target.value)} placeholder="Необязательно. Например: уточнить задачу и предложить созвон" /><div className="mt-3 flex justify-end gap-2"><button className="secondary-button" onClick={() => void navigator.clipboard.writeText(maxReplyDraft)} disabled={!maxReplyDraft.trim()}><Clipboard size={15} /> Copy</button><button className="primary-button" onClick={() => void sendMax(maxReplyDraft)} disabled={!selectedMaxContact || !maxReplyDraft.trim() || Boolean(pending)}>{pending === "max-send" ? <LoaderCircle size={15} className="animate-spin" /> : <SendHorizontal size={15} />} Отправить</button></div></div> : !["memory", "work_profile"].includes(tab) ? <div className="shrink-0 border-t border-line p-4">
               <label className="mb-2 block text-xs font-medium text-slate-300">Цель / комментарий</label>
               <textarea className="comment-input" rows={2} value={comment} onChange={(event) => setComment(event.target.value)} onBlur={() => void saveConversationGoal()} placeholder="Например: зафиксировать срок и оплату" />
               <div className="mt-3 flex justify-end gap-2">
@@ -1456,7 +1561,7 @@ function AdvisorApp() {
                 <button className="secondary-button" onClick={() => setDraft(replyDraft)} disabled={!replyDraft.trim()}><MessageSquareText size={15} /> В чат</button>
                 <button className="primary-button" onClick={() => void sendMessage(replyDraft)} disabled={!selectedId || !replyDraft.trim() || Boolean(pending)}><SendHorizontal size={15} /> Отправить</button>
               </div>
-            </div>}
+            </div> : null}
           </aside>
         </Panel>
       </Group>
@@ -1804,7 +1909,7 @@ function Avatar({ profile, compact = false }: { profile: Profile; compact?: bool
 function MessageBubble({ message, isNew, outsideHoursLabel, onReply }: { message: Message; isNew: boolean; outsideHoursLabel: string; onReply: (target: ReplyTarget) => void }) {
   const canReply = Number(message.telegram_message_id) > 0;
   return (
-    <article className={`message-row ${message.out ? "out" : "in"}`}>
+    <article id={message.telegram_message_id ? `message-${message.telegram_message_id}` : undefined} className={`message-row ${message.out ? "out" : "in"}`}>
       <div className={`bubble ${message.out ? "bubble-out" : "bubble-in"} ${isNew ? "message-new" : ""}`}>
         {message.reply_to_telegram_message_id && <div className="message-reply-link">Ответ на сообщение</div>}
         <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold text-slate-200/80">
@@ -2057,6 +2162,54 @@ function ContextSummary({ analysis, detail, fallbackTone, fallbackGoal, fallback
   ];
   return <details className="context-summary mb-4" open><summary>Контекст</summary><div>{rows.map((row) => <span key={row}><CheckCircle2 size={12} /> {row}</span>)}</div></details>;
 }
+
+function WorkingMemoryPanel({ memory, pending, onSync, onEdit, onUpdate, onDelete, onOpenSource }: {
+  memory: WorkingMemory | null;
+  pending: boolean;
+  onSync: () => void;
+  onEdit: (item: MemoryItem) => void;
+  onUpdate: (item: MemoryItem, changes: Partial<MemoryItem>) => void;
+  onDelete: (item: MemoryItem) => void;
+  onOpenSource: (messageId: number | null | undefined) => void;
+}) {
+  if (!memory) return <div className="flex min-h-48 items-center justify-center text-sm text-muted"><LoaderCircle size={17} className="mr-2 animate-spin" /> Загружаю рабочую память</div>;
+  const groups: Array<[MemoryItem["kind"], string]> = [["commitment", "Обязательства"], ["task", "Задачи"], ["money_event", "Деньги"], ["follow_up", "Следующее касание"], ["status", "Статус"], ["note", "Важные заметки"]];
+  return <div className="space-y-4">
+    <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-100">{memory.contact.display_name}</h3><p className="mt-1 text-xs text-muted">{memory.contact.relationship_status || "Статус пока не определён"}</p></div><button className="secondary-button shrink-0" disabled={pending} onClick={onSync}>{pending ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />} Обновить память</button></div>
+    {memory.last_run?.status === "error" && <div className="border-l-2 border-red-400 bg-red-400/10 px-3 py-2 text-xs text-red-300">{memory.last_run.error}</div>}
+    <section className="rounded-lg border border-line bg-[#0d1d29] p-3"><p className="text-[11px] font-semibold uppercase text-muted">Что происходит</p><p className="mt-2 whitespace-pre-wrap text-sm leading-5 text-slate-200">{memory.contact.context_summary || "Память ещё не построена. Нажмите «Обновить память»."}</p>{memory.contact.next_action && <div className="mt-3 border-l-2 border-sky-400 pl-3"><p className="text-[11px] text-sky-300">Следующий шаг</p><p className="mt-1 text-sm">{memory.contact.next_action}</p></div>}</section>
+    <div className="grid grid-cols-3 gap-2"><MemoryMoney label="Согласовано" value={formatRubles(memory.totals.agreed)} /><MemoryMoney label="Получено" value={formatRubles(memory.totals.received)} /><MemoryMoney label="Остаток" value={formatRubles(memory.totals.remaining)} accent /></div>
+    {groups.map(([kind, label]) => { const items = memory.items.filter((item) => item.kind === kind && item.status !== "deleted"); if (!items.length) return null; return <section key={kind} className="space-y-2"><h4 className="text-xs font-semibold uppercase text-muted">{label}</h4>{items.map((item) => <MemoryItemCard key={item.id} item={item} onEdit={onEdit} onUpdate={onUpdate} onDelete={onDelete} onOpenSource={onOpenSource} />)}</section>; })}
+    {!memory.items.length && <p className="py-8 text-center text-sm text-muted">Значимых договорённостей пока не найдено.</p>}
+  </div>;
+}
+
+function MemoryItemCard({ item, onEdit, onUpdate, onDelete, onOpenSource }: { item: MemoryItem; onEdit: (item: MemoryItem) => void; onUpdate: (item: MemoryItem, changes: Partial<MemoryItem>) => void; onDelete: (item: MemoryItem) => void; onOpenSource: (messageId: number | null | undefined) => void }) {
+  return <article className="rounded-lg border border-line bg-[#0d1d29] p-3">
+    <div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="flex flex-wrap items-center gap-1.5"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${certaintyClass(item.certainty)}`}>{certaintyLabel(item.certainty)}</span><span className="text-[10px] text-muted">{item.created_by === "AI" ? "AI" : "вручную"} · {item.actor === "me" ? "я" : item.actor === "them" ? "контакт" : "кто-то"}</span></div><p className={`mt-2 text-sm font-medium leading-5 ${item.status === "done" ? "text-muted line-through" : "text-slate-100"}`}>{item.title}</p></div><div className="flex shrink-0"><button className="icon-button" title="Исправить" onClick={() => onEdit(item)}><Pencil size={13} /></button><button className="icon-button text-red-300" title="Удалить" onClick={() => onDelete(item)}><Trash2 size={13} /></button></div></div>
+    {(item.amount > 0 || item.due_at) && <p className="mt-2 text-xs text-amber-200">{item.amount > 0 ? formatRubles(item.amount) : ""}{item.amount > 0 && item.due_at ? " · " : ""}{item.due_at ? `срок ${item.due_at}` : ""}</p>}
+    {item.details && <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-slate-300">{item.details}</p>}
+    {item.sources.length > 0 && <div className="mt-3 space-y-1.5">{item.sources.map((source) => <button key={source.id} className="block w-full rounded border border-sky-900/80 bg-sky-950/30 px-2 py-1.5 text-left text-[11px] text-sky-200 hover:border-sky-500" onClick={() => onOpenSource(source.locator.telegram_message_id)} title={source.source_excerpt || source.text}><span className="font-semibold">Источник #{source.external_message_id}</span><span className="ml-2 text-sky-300/70">{(source.source_excerpt || source.text).slice(0, 90)}</span></button>)}</div>}
+    <div className="mt-3 flex items-center justify-between gap-2"><select className="rounded border border-line bg-[#0b1621] px-2 py-1 text-[11px]" value={item.certainty} onChange={(event) => onUpdate(item, { certainty: event.target.value as MemoryItem["certainty"] })}><option value="CONFIRMED">Подтверждено</option><option value="INFERRED">Вывод</option><option value="UNCERTAIN">Неопределённо</option></select>{["task", "commitment", "follow_up"].includes(item.kind) && <button className="secondary-button !px-2 !py-1 text-[11px]" onClick={() => onUpdate(item, { status: item.status === "done" ? "active" : "done" })}><CheckCircle2 size={13} /> {item.status === "done" ? "Вернуть" : "Сделано"}</button>}</div>
+  </article>;
+}
+
+function MemoryMoney({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+  return <div className={`rounded-lg border p-2 ${accent ? "border-amber-500/40 bg-amber-500/10" : "border-line bg-[#0d1d29]"}`}><span className="block text-[10px] text-muted">{label}</span><strong className="mt-1 block text-xs">{value}</strong></div>;
+}
+
+function WorkProfilePanel({ profile, pending, onChange, onSave }: { profile: WorkProfile; pending: boolean; onChange: (profile: WorkProfile) => void; onSave: () => void }) {
+  const field = (key: keyof WorkProfile, value: string | number) => onChange({ ...profile, [key]: value });
+  return <div className="space-y-4"><div><h3 className="text-sm font-semibold">Рабочий профиль</h3><p className="mt-1 text-xs leading-5 text-muted">Постоянный контекст для оценки заказов, рабочей памяти и ответов.</p></div><WorkProfileField label="Кто я" value={profile.about} onChange={(value) => field("about", value)} placeholder="Frontend / web developer, опыт и специализация" /><WorkProfileField label="Навыки" value={profile.skills} onChange={(value) => field("skills", value)} placeholder="HTML, CSS, JavaScript, React, WordPress" /><div className="grid grid-cols-2 gap-3"><label className="text-xs font-medium text-slate-300">Ставка, ₽/час<input className="mt-2 w-full rounded border border-line bg-[#0b1621] px-3 py-2" type="number" min="0" value={profile.base_rate} onChange={(event) => field("base_rate", Number(event.target.value))} /></label><label className="text-xs font-medium text-slate-300">Минимальный заказ, ₽<input className="mt-2 w-full rounded border border-line bg-[#0b1621] px-3 py-2" type="number" min="0" value={profile.minimum_order} onChange={(event) => field("minimum_order", Number(event.target.value))} /></label></div><WorkProfileField label="Правила оценки" value={profile.pricing_rules} onChange={(value) => field("pricing_rules", value)} placeholder="Когда нужен диапазон, что входит в оценку" /><WorkProfileField label="Риски" value={profile.risk_rules} onChange={(value) => field("risk_rules", value)} placeholder="Legacy +20%, неясное ТЗ — сначала уточнения" /><WorkProfileField label="Стиль общения" value={profile.style} onChange={(value) => field("style", value)} placeholder="Лексика, длина ответа, допустимый тон" /><WorkProfileField label="Границы" value={profile.boundaries} onChange={(value) => field("boundaries", value)} placeholder="Что не обещать, какие задачи не брать" /><div className="flex justify-end"><button className="primary-button" disabled={pending} onClick={onSave}>{pending ? <LoaderCircle size={15} className="animate-spin" /> : <BookOpenText size={15} />} Сохранить профиль</button></div></div>;
+}
+
+function WorkProfileField({ label, value, placeholder, onChange }: { label: string; value: string; placeholder: string; onChange: (value: string) => void }) {
+  return <label className="block text-xs font-medium text-slate-300">{label}<textarea className="detail-editor mt-2 min-h-24" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} /></label>;
+}
+
+function certaintyLabel(certainty: MemoryItem["certainty"]): string { return certainty === "CONFIRMED" ? "Подтверждено" : certainty === "INFERRED" ? "Вывод" : "Неопределённо"; }
+function certaintyClass(certainty: MemoryItem["certainty"]): string { return certainty === "CONFIRMED" ? "bg-emerald-500/15 text-emerald-300" : certainty === "INFERRED" ? "bg-sky-500/15 text-sky-300" : "bg-amber-500/15 text-amber-300"; }
+function formatRubles(value: number): string { return new Intl.NumberFormat("ru-RU").format(value || 0) + " ₽"; }
 
 function AiTab({ tab, analysis, detail, replyDraft, setReplyDraft, userStyle, setUserStyle, weekendPolicy, setWeekendPolicy, afterHoursPolicy, setAfterHoursPolicy, workdayStartHour, setWorkdayStartHour, workdayEndHour, setWorkdayEndHour, notificationsEnabled, setNotificationsEnabled, notificationChat, setNotificationChat, testNotifications, saveStyle }: {
   tab: Tab;

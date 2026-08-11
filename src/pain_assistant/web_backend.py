@@ -184,6 +184,81 @@ class AdvisorWebService:
             "stats": {"total": len(projects), "price": price, "paid": paid, "receivable": receivable, "payable": payable, "paid_out": paid_out, "remaining_payable": remaining_payable, "balance": receivable - remaining_payable},
         }
 
+    def work_profile(self) -> dict:
+        return self.db.work_profile()
+
+    def save_work_profile(self, raw: dict) -> dict:
+        try:
+            return self.db.save_work_profile(raw)
+        except (TypeError, ValueError) as exc:
+            raise WebApiError("Ставка и минимальный заказ должны быть целыми числами.") from exc
+
+    def working_memory(self, profile_id: int) -> dict:
+        self._require_profile(profile_id)
+        return self.db.working_memory(profile_id)
+
+    def update_working_memory(self, profile_id: int) -> dict:
+        profile = self._require_profile(profile_id)
+        cursor_key = f"working_memory_cursor:{profile_id}"
+        try:
+            cursor_from = int(self.db.get_setting(cursor_key, "0"))
+        except ValueError:
+            cursor_from = 0
+        with self._analysis_lock:
+            messages, cursor_to = self.db.analysis_context_messages(
+                profile_id,
+                cursor_from,
+                initial_limit=max(40, _analysis_message_limit(self.db)),
+                overlap_limit=8,
+            )
+            if not messages:
+                return self.db.working_memory(profile_id)
+            run_id = self.db.start_memory_run(profile_id, cursor_from, cursor_to, self.analysis_model())
+            try:
+                current = self.db.working_memory(profile_id)
+                compact_current = {
+                    "contact": current["contact"],
+                    "totals": current["totals"],
+                    "items": [
+                        {key: item.get(key) for key in (
+                            "kind", "category", "title", "actor", "status", "amount",
+                            "currency", "due_at", "certainty",
+                        )}
+                        for item in current["items"]
+                        if item.get("status") != "deleted"
+                    ][:80],
+                }
+                extracted = self.ai.extract_working_memory(
+                    profile,
+                    messages,
+                    self.db.work_profile(),
+                    compact_current,
+                )
+                sources = self.db.ensure_telegram_communication_records(profile_id, messages)
+                saved_ids = self.db.apply_memory_analysis(profile_id, extracted, sources)
+                self.db.set_setting(cursor_key, str(cursor_to))
+                self.db.finish_memory_run(run_id, "complete")
+            except Exception as exc:
+                self.db.finish_memory_run(run_id, "error", str(exc))
+                raise
+        payload = self.db.working_memory(profile_id)
+        payload["changed_item_ids"] = saved_ids
+        return payload
+
+    def update_memory_item(self, item_id: int, raw: dict) -> dict:
+        try:
+            item = self.db.update_memory_item(item_id, raw)
+        except (TypeError, ValueError) as exc:
+            raise WebApiError("Некорректные данные записи рабочей памяти.") from exc
+        if not item:
+            raise WebApiError("Запись рабочей памяти не найдена.")
+        return item
+
+    def delete_memory_item(self, item_id: int) -> None:
+        if not self.db.memory_item(item_id):
+            raise WebApiError("Запись рабочей памяти не найдена.")
+        self.db.delete_memory_item(item_id)
+
     def _gmail_lead_source(self, account: dict[str, Any]) -> str:
         return f"gmail:{account.get('id', '')}"
 
@@ -414,6 +489,11 @@ class AdvisorWebService:
         self._require_profile(profile_id)
         messages, has_more = self.db.older_messages(profile_id, before_message_id, max(20, min(180, limit)))
         return {"messages": self._decorate_messages(profile_id, messages), "history_has_more": has_more}
+
+    def messages_around(self, profile_id: int, message_id: int) -> dict:
+        self._require_profile(profile_id)
+        messages = self.db.messages_around(profile_id, message_id)
+        return {"messages": self._decorate_messages(profile_id, messages)}
 
     def _decorate_messages(self, profile_id: int, messages: list[dict]) -> list[dict]:
         for message in messages:
@@ -651,7 +731,7 @@ class AdvisorWebService:
                 initial_limit=message_limit or _analysis_message_limit(self.db),
             )
             history = _prepare_analysis_messages(history)
-            style = self.db.get_setting("user_style_profile")
+            style = self.ai_work_context()
             memory = self.db.get_setting(summary_key)
             result = self.ai.analyze_screenshot(
                 b"",
@@ -710,7 +790,7 @@ class AdvisorWebService:
                     f"Описание темы: {self.topic_rule(profile_id, topic) or 'не задано'}\n\n"
                     f"{self.db.get_setting(f'analysis_context_summary:{profile_id}:topic:{topic.casefold()}') }"
                 ),
-                user_style_profile=self.user_style(),
+                user_style_profile=self.ai_work_context(),
             ).strip()
             if not result:
                 raise WebApiError("ИИ не вернул переработанный текст.")
@@ -740,6 +820,23 @@ class AdvisorWebService:
 
     def user_style(self) -> str:
         return self.db.get_setting("user_style_profile")
+
+    def ai_work_context(self) -> str:
+        profile = self.db.work_profile()
+        sections = [
+            ("Пользовательский стиль", self.user_style()),
+            ("Кто я", profile["about"]),
+            ("Навыки", profile["skills"]),
+            ("Правила оценки", profile["pricing_rules"]),
+            ("Риски", profile["risk_rules"]),
+            ("Рабочий стиль", profile["style"]),
+            ("Границы", profile["boundaries"]),
+        ]
+        if profile["base_rate"]:
+            sections.append(("Базовая ставка", f"{profile['base_rate']} ₽/час"))
+        if profile["minimum_order"]:
+            sections.append(("Минимальный заказ", f"{profile['minimum_order']} ₽"))
+        return "\n\n".join(f"{title}: {value}" for title, value in sections if str(value).strip())
 
     def assistant_role(self) -> str:
         selected = self.db.get_setting("assistant_role", "general")
@@ -1103,7 +1200,7 @@ class AdvisorWebService:
         history = [{"message_date": message.get("date", ""), "sender": "Вы" if message.get("out") else message.get("sender", contact["name"]), "out": bool(message.get("out")), "text": str(message.get("text", ""))[:6000]} for message in contact.get("messages", [])[-40:]]
         profile = ClientProfile(id=None, chat_name=f"{contact['name']} ({contact['email']})", communication_style="Переписка в MAX.", tone_recommendations="Ответ без служебных заголовков.")
         with self._analysis_lock:
-            result = self.ai.analyze_screenshot(b"", profile, history, tone or "деловой", user_comment=f"Подготовь ответ на последнее входящее сообщение MAX. ТЗ пользователя: {task}. Верни только текст сообщения в вариантах ответа.", user_style_profile=self.user_style(), business_calendar_context=business_calendar_context(weekend_policy=self.weekend_policy(), after_hours_policy=self.after_hours_policy(), workday_start_hour=self.workday_start_hour(), workday_end_hour=self.workday_end_hour()))
+            result = self.ai.analyze_screenshot(b"", profile, history, tone or "деловой", user_comment=f"Подготовь ответ на последнее входящее сообщение MAX. ТЗ пользователя: {task}. Верни только текст сообщения в вариантах ответа.", user_style_profile=self.ai_work_context(), business_calendar_context=business_calendar_context(weekend_policy=self.weekend_policy(), after_hours_policy=self.after_hours_policy(), workday_start_hour=self.workday_start_hour(), workday_end_hour=self.workday_end_hour()))
         payload = asdict(result)
         payload["context"] = {"message_count": len(history), "contact": profile.chat_name, "relationship": "MAX", "tone": tone or "деловой", "goal": task, "topic": "MAX", "role": ASSISTANT_ROLES[self.assistant_role()]["label"], "topic_memory": False}
         return payload
@@ -1379,7 +1476,7 @@ class AdvisorWebService:
                     f"Подготовь ответ на последнее входящее письмо. ТЗ пользователя: {task}. "
                     "Верни только текст письма в вариантах ответа; не добавляй тему, To/From и технические заголовки."
                 ),
-                user_style_profile=self.user_style(),
+                user_style_profile=self.ai_work_context(),
                 business_calendar_context=business_calendar_context(
                     weekend_policy=self.weekend_policy(),
                     after_hours_policy=self.after_hours_policy(),
@@ -1861,6 +1958,8 @@ class AdvisorRequestHandler(BaseHTTPRequestHandler):
                 self._projects_page()
             elif parts == ["api", "projects"]:
                 self._json(self.service.projects())
+            elif parts == ["api", "work-profile"]:
+                self._json(self.service.work_profile())
             elif parts == ["api", "onboarding"]:
                 self._json(self.service.onboarding_status())
             elif len(parts) == 4 and parts[:2] == ["api", "telegram"] and parts[2] == "auth":
@@ -1912,6 +2011,15 @@ class AdvisorRequestHandler(BaseHTTPRequestHandler):
                     self._json(self.service.older_messages(_profile_id(parts[2]), _message_id(before), _limit(query.get("limit", ["100"])[0])))
                 else:
                     self._json({"messages": self.service.messages(_profile_id(parts[2]), _limit(query.get("limit", ["100"])[0]))})
+            elif len(parts) == 5 and parts[:2] == ["api", "profiles"] and parts[3:] == ["messages", "around"]:
+                self._json(
+                    self.service.messages_around(
+                        _profile_id(parts[2]),
+                        _message_id(query.get("message_id", [""])[0]),
+                    )
+                )
+            elif len(parts) == 4 and parts[:2] == ["api", "profiles"] and parts[3] == "working-memory":
+                self._json(self.service.working_memory(_profile_id(parts[2])))
             elif len(parts) == 4 and parts[:2] == ["api", "profiles"] and parts[3] == "project-status":
                 self._json(self.service.project_scan_status(_profile_id(parts[2])))
             elif len(parts) == 4 and parts[:2] == ["api", "profiles"] and parts[3] == "projects":
@@ -1940,6 +2048,8 @@ class AdvisorRequestHandler(BaseHTTPRequestHandler):
             body = self._body()
             if parts == ["api", "telegram", "import"]:
                 self._json(self.service.import_telegram_chat(str(body.get("peer", "")), str(body.get("account", "work"))))
+            elif parts == ["api", "work-profile"]:
+                self._json(self.service.save_work_profile(body))
             elif parts == ["api", "projects"]:
                 self._json(self.service.save_project(body))
             elif parts == ["api", "projects", "scan"]:
@@ -2086,6 +2196,10 @@ class AdvisorRequestHandler(BaseHTTPRequestHandler):
                         str(body.get("user_comment", "")),
                     )
                 )
+            elif len(parts) == 4 and parts[:2] == ["api", "profiles"] and parts[3] == "working-memory":
+                self._json(self.service.update_working_memory(_profile_id(parts[2])))
+            elif len(parts) == 3 and parts[:2] == ["api", "memory-items"]:
+                self._json(self.service.update_memory_item(_memory_item_id(parts[2]), body))
             elif len(parts) == 4 and parts[:2] == ["api", "profiles"] and parts[3] == "rewrite":
                 self._json(
                     self.service.rewrite_message(
@@ -2110,6 +2224,9 @@ class AdvisorRequestHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
             elif len(parts) == 3 and parts[:2] == ["api", "projects"]:
                 self.service.delete_project(_project_id(parts[2]))
+                self._json({"ok": True})
+            elif len(parts) == 3 and parts[:2] == ["api", "memory-items"]:
+                self.service.delete_memory_item(_memory_item_id(parts[2]))
                 self._json({"ok": True})
             else:
                 self._error(HTTPStatus.NOT_FOUND, "Маршрут не найден.")
@@ -2259,6 +2376,16 @@ def _project_id(value: str) -> int:
     if project_id <= 0:
         raise WebApiError("Некорректный проект.")
     return project_id
+
+
+def _memory_item_id(value: str) -> int:
+    try:
+        item_id = int(value)
+    except ValueError as exc:
+        raise WebApiError("Некорректная запись рабочей памяти.") from exc
+    if item_id <= 0:
+        raise WebApiError("Некорректная запись рабочей памяти.")
+    return item_id
 
 
 def _project_date(value: object) -> str:

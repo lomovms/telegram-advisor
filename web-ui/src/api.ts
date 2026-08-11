@@ -156,6 +156,75 @@ export type GmailContactLabelStatus = { state: "idle" | "running" | "done" | "er
 
 export type MaxContact = GmailContact;
 
+export type WorkProfile = {
+  id: number;
+  about: string;
+  skills: string;
+  base_rate: number;
+  minimum_order: number;
+  pricing_rules: string;
+  risk_rules: string;
+  style: string;
+  boundaries: string;
+  updated_at: string;
+};
+
+export type MemorySource = {
+  id: number;
+  channel: "telegram" | "gmail" | "max";
+  external_message_id: string;
+  occurred_at: string;
+  sender: string;
+  text: string;
+  source_excerpt: string;
+  locator: { profile_id?: number; telegram_message_id?: number | null };
+};
+
+export type MemoryItem = {
+  id: number;
+  contact_id: number;
+  project_id: number | null;
+  kind: "task" | "commitment" | "money_event" | "follow_up" | "status" | "note";
+  category: string;
+  title: string;
+  details: string;
+  actor: "me" | "them" | "unknown";
+  status: string;
+  amount: number;
+  currency: string;
+  due_at: string;
+  certainty: "CONFIRMED" | "INFERRED" | "UNCERTAIN";
+  confidence: number;
+  created_by: "AI" | "manual";
+  created_at: string;
+  updated_at: string;
+  sources: MemorySource[];
+};
+
+export type WorkingMemory = {
+  contact: {
+    id: number;
+    legacy_profile_id: number;
+    display_name: string;
+    relationship_status: string;
+    context_summary: string;
+    next_action: string;
+    next_contact_at: string;
+    last_analyzed_at: string;
+  };
+  items: MemoryItem[];
+  totals: {
+    agreed: number;
+    received: number;
+    expected: number;
+    payable: number;
+    paid_out: number;
+    remaining: number;
+  };
+  last_run: { status: string; error: string; updated_at: string } | null;
+  changed_item_ids?: number[];
+};
+
 export type AppSettings = {
   user_style: string;
   analysis_model: AnalysisModel["id"];
@@ -224,6 +293,19 @@ export const api = {
   startCodexLogin: () => request<{ ok: true }>("/api/codex/login", { method: "POST", body: "{}" }),
   profiles: (account: Account) => request<{ profiles: Profile[] }>(`/api/profiles?account=${account}`),
   profile: (id: number) => request<ProfileDetail>(`/api/profiles/${id}`),
+  workProfile: () => request<WorkProfile>("/api/work-profile"),
+  saveWorkProfile: (profile: WorkProfile) => request<WorkProfile>("/api/work-profile", {
+    method: "POST",
+    body: JSON.stringify(profile),
+  }),
+  workingMemory: (id: number) => request<WorkingMemory>(`/api/profiles/${id}/working-memory`),
+  updateWorkingMemory: (id: number) => request<WorkingMemory>(`/api/profiles/${id}/working-memory`, { method: "POST", body: "{}" }),
+  updateMemoryItem: (id: number, changes: Partial<MemoryItem>) => request<MemoryItem>(`/api/memory-items/${id}`, {
+    method: "POST",
+    body: JSON.stringify(changes),
+  }),
+  deleteMemoryItem: (id: number) => request<{ ok: true }>(`/api/memory-items/${id}`, { method: "DELETE" }),
+  messagesAround: (profileId: number, messageId: number) => request<{ messages: Message[] }>(`/api/profiles/${profileId}/messages/around?message_id=${messageId}`),
   send: (id: number, text: string, replyTo?: number | null) => request<Message>(`/api/profiles/${id}/send`, { method: "POST", body: JSON.stringify({ text, reply_to: replyTo ?? null }) }),
   refresh: (id: number) => request<{ added: number }>(`/api/profiles/${id}/refresh`, { method: "POST", body: "{}" }),
   rebuildProfile: (id: number) => request<Profile>(`/api/profiles/${id}/profile-refresh`, { method: "POST", body: "{}" }),

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import threading
 import unittest
+import sqlite3
 from datetime import datetime
 from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
 from pain_assistant.db import Database
 from pain_assistant.calendar_context import business_calendar_context
@@ -44,8 +46,34 @@ class CapturingAi:
         return f"Переработано: {source_text}"
 
 
+class MemoryAi(CapturingAi):
+    def extract_working_memory(self, _profile, messages: list[dict], work_profile: dict, current_memory: dict) -> dict:
+        self.calls.append({"messages": messages, "work_profile": work_profile, "current_memory": current_memory})
+        return {
+            "relationship_status": "active_work",
+            "context_summary": "Согласована работа, ожидается оплата.",
+            "next_action": "Начать работу.",
+            "next_contact_at": "2026-08-15",
+            "items": [{
+                "kind": "money_event",
+                "category": "agreed",
+                "title": "Согласована стоимость 30 000 ₽",
+                "details": "Стоимость прямо подтверждена клиентом.",
+                "actor": "them",
+                "status": "active",
+                "amount": 30000,
+                "currency": "RUB",
+                "due_at": "",
+                "certainty": "CONFIRMED",
+                "confidence": 0.98,
+                "source_message_ids": [3],
+            }],
+        }
+
+
 def make_service(db_path: Path, ai: CapturingAi) -> AdvisorWebService:
     service = AdvisorWebService.__new__(AdvisorWebService)
+    service.config = SimpleNamespace(openclaw_model="")
     service.db = Database(db_path)
     service.ai = ai
     service._analysis_lock = threading.Lock()
@@ -66,6 +94,106 @@ def messages(first_id: int, last_id: int) -> list[dict]:
 
 
 class IncrementalAnalysisContextTests(unittest.TestCase):
+    def test_legacy_database_is_migrated_without_losing_data(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "advisor.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.executescript(
+                    """
+                    CREATE TABLE client_profiles (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        chat_name TEXT NOT NULL,
+                        agreements TEXT NOT NULL DEFAULT '',
+                        payment_promises TEXT NOT NULL DEFAULT '',
+                        disputed_points TEXT NOT NULL DEFAULT '',
+                        behavior_patterns TEXT NOT NULL DEFAULT '',
+                        communication_style TEXT NOT NULL DEFAULT '',
+                        tone_recommendations TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE TABLE app_settings (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                    INSERT INTO client_profiles (chat_name) VALUES ('Старый контакт');
+                    INSERT INTO app_settings (key, value) VALUES ('user_style_profile', 'Коротко');
+                    INSERT INTO app_settings (key, value) VALUES ('telegram_peer:1', '@legacy');
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            db = Database(db_path)
+
+            self.assertEqual(db.get_profile(1).chat_name, "Старый контакт")
+            self.assertEqual(db.work_profile()["style"], "Коротко")
+            memory = db.working_memory(1)
+            self.assertEqual(memory["contact"]["display_name"], "Старый контакт")
+            with db.connect() as conn:
+                self.assertEqual(conn.execute("SELECT version FROM schema_migrations").fetchone()["version"], 1)
+                self.assertEqual(conn.execute("SELECT external_contact_id FROM contact_channels").fetchone()["external_contact_id"], "@legacy")
+
+    def test_work_profile_is_structured_and_persisted(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db = Database(Path(temp_dir) / "advisor.db")
+            saved = db.save_work_profile({
+                "about": "Frontend-разработчик",
+                "skills": "React\nWordPress",
+                "base_rate": 1200,
+                "minimum_order": 5000,
+                "pricing_rules": "Сначала уточнить объём.",
+                "risk_rules": "Legacy +20%.",
+                "style": "Коротко и по делу.",
+                "boundaries": "Не обещать срок без оценки.",
+            })
+
+            self.assertEqual(saved["base_rate"], 1200)
+            self.assertEqual(db.work_profile()["risk_rules"], "Legacy +20%.")
+
+    def test_work_profile_is_included_in_reply_context(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            ai = CapturingAi()
+            service = make_service(Path(temp_dir) / "advisor.db", ai)
+            profile_id = service.db.save_profile(ClientProfile(id=None, chat_name="Клиент"))
+            service.db.save_messages(profile_id, messages(1, 2))
+            service.db.save_work_profile({"skills": "React", "base_rate": 1200, "boundaries": "Не обещать срок без оценки"})
+
+            service.analyze(profile_id, "мой стиль", "")
+
+            context = ai.calls[0]["user_style_profile"]
+            self.assertIn("Навыки: React", context)
+            self.assertIn("Базовая ставка: 1200 ₽/час", context)
+            self.assertIn("Границы: Не обещать срок без оценки", context)
+
+    def test_working_memory_keeps_source_and_deduplicates_items(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            ai = MemoryAi()
+            service = make_service(Path(temp_dir) / "advisor.db", ai)
+            profile_id = service.db.save_profile(ClientProfile(id=None, chat_name="Клиент"))
+            service.db.set_setting(f"telegram_account:{profile_id}", "work")
+            service.db.set_setting(f"telegram_peer:{profile_id}", "client")
+            service.db.save_messages(profile_id, messages(1, 2) + [{
+                "telegram_message_id": 3,
+                "date": "2026-08-12T10:00:00+03:00",
+                "sender": "Клиент",
+                "out": False,
+                "text": "Да, договорились на 30 тысяч.",
+            }])
+
+            first = service.update_working_memory(profile_id)
+            second = service.update_working_memory(profile_id)
+
+            self.assertEqual(first["contact"]["relationship_status"], "active_work")
+            self.assertEqual(first["totals"]["agreed"], 30000)
+            self.assertEqual(len(second["items"]), 1)
+            self.assertEqual(second["items"][0]["certainty"], "CONFIRMED")
+            self.assertEqual(second["items"][0]["sources"][0]["locator"]["telegram_message_id"], 3)
+            self.assertTrue(service.db.get_setting(f"working_memory_cursor:{profile_id}"))
+
     def test_calendar_marks_time_before_workday_start_as_non_working(self) -> None:
         context = business_calendar_context(
             workday_start_hour=9,

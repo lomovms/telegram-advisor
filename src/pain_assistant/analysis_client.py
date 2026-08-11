@@ -151,6 +151,61 @@ class AnalysisClient:
         projects = data.get("projects", []) if isinstance(data, dict) else []
         return [item for item in projects if isinstance(item, dict)][:12]
 
+    def extract_working_memory(
+        self,
+        profile: ClientProfile,
+        messages: list[dict],
+        work_profile: dict,
+        current_memory: dict,
+    ) -> dict:
+        history = _working_memory_history(messages)
+        instructions = (
+            "Ты обновляешь рабочую память фрилансера по переписке. Верни только JSON без Markdown. "
+            "Формат: {\"relationship_status\":\"...\",\"context_summary\":\"...\","
+            "\"next_action\":\"...\",\"next_contact_at\":\"YYYY-MM-DD или пусто\",\"items\":[...]}. "
+            "Каждый item: kind, category, title, details, actor, status, amount, currency, due_at, "
+            "certainty, confidence, source_message_ids. "
+            "kind только task, commitment, money_event, follow_up, status или note. "
+            "actor: me, them или unknown. certainty: CONFIRMED, INFERRED или UNCERTAIN. "
+            "Для money_event category: agreed, received, expected, payable или paid_out. "
+            "Сумму указывай только если она прямо названа и понятно направление платежа. "
+            "CONFIRMED допустим только для явной договорённости или сообщения о факте. "
+            "Не превращай предложение, приблизительную оценку или вопрос в подтверждённый факт. "
+            "source_message_ids должны содержать только message_id из переданной переписки, на которых основан item. "
+            "Не создавай записи для обычного флуда. Не повторяй существующую память без новой информации. "
+            "Если важных изменений нет, верни items: []."
+        )
+        text = (
+            f"Контакт: {profile.chat_name}\n\n"
+            f"Рабочий профиль пользователя:\n{json.dumps(work_profile, ensure_ascii=False)[:12000]}\n\n"
+            f"Текущая рабочая память:\n{json.dumps(current_memory, ensure_ascii=False)[:16000]}\n\n"
+            f"Новая порция переписки:\n{history}"
+        )
+        try:
+            if self.backend == "codex" and self.use_direct_codex:
+                raw = self.codex_cli._create_response(instructions, text)
+            elif self.backend in REMOTE_GATEWAY_BACKENDS and self.openclaw:
+                ensure_openclaw_tunnel(self.config)
+                raw = self.openclaw._create_response(instructions, text)
+            elif self.backend in {"stub", "mock"}:
+                return {
+                    "relationship_status": "unknown",
+                    "context_summary": "",
+                    "next_action": "",
+                    "next_contact_at": "",
+                    "items": [],
+                }
+            else:
+                raise AnalysisClientError("Обновление рабочей памяти доступно при подключённом Codex.")
+            data = json.loads(raw)
+        except (json.JSONDecodeError, OpenClawClientError, SshTunnelError) as exc:
+            raise AnalysisClientError(f"Не удалось обновить рабочую память: {exc}") from exc
+        if not isinstance(data, dict):
+            raise AnalysisClientError("Codex вернул неверный формат рабочей памяти.")
+        items = data.get("items", [])
+        data["items"] = [item for item in items if isinstance(item, dict)][:30] if isinstance(items, list) else []
+        return data
+
     def analyze_screenshot(
         self,
         png_bytes: bytes,
@@ -267,6 +322,28 @@ class AnalysisClient:
             f"Неизвестный ANALYSIS_BACKEND={self.config.analysis_backend!r}. "
             "Используй codex, openclaw, stub, openai или ocr."
         )
+
+
+def _working_memory_history(messages: list[dict], max_chars: int = 48_000) -> str:
+    lines: list[str] = []
+    total = 0
+    for message in reversed(messages):
+        message_id = message.get("telegram_message_id")
+        if message_id is None:
+            message_id = f"row:{message.get('context_row_id', 0)}"
+        direction = "я" if message.get("out") else "контакт"
+        line = (
+            f"[message_id={message_id}; date={message.get('message_date') or message.get('date') or ''}; "
+            f"author={direction}; sender={message.get('sender', '')}]\n"
+            f"{str(message.get('text', '')).strip()}"
+        ).strip()
+        if not line:
+            continue
+        total += len(line)
+        if total > max_chars and lines:
+            break
+        lines.append(line)
+    return "\n\n".join(reversed(lines)) or "нет сообщений"
 
 
 def _gateway_unavailable_message(config: AppConfig, exc: Exception) -> str:
