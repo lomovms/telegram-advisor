@@ -1,0 +1,51 @@
+# Local secrets and account credentials
+.env
+.env.*
+!.env.example
+
+# Runtime data, databases, sessions, media, and logs
+data/
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.session
+*.session-journal
+*.log
+*.pid
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# JavaScript and frontend output
+node_modules/
+dist/
+.vite/
+
+# Tauri and packaged binaries
+web-ui/src-tauri/target/
+web-ui/src-tauri/gen/
+web-ui/src-tauri/resources/backend/
+web-ui/src-tauri/resources/codex/
+*.exe
+*.msi
+*.msix
+
+# Build output
+build/
+release/
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+

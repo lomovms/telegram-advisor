@@ -1,0 +1,13 @@
+PySide6>=6.7
+openai>=1.80.0
+httpx>=0.28.0
+truststore>=0.10.4
+mss>=9.0.1
+Pillow>=10.0.0
+pygetwindow>=0.0.9
+keyboard>=0.13.5
+python-dotenv>=1.0.1
+beautifulsoup4>=4.12.3
+pytesseract>=0.3.10
+telethon>=1.36.0
+qrcode>=7.4.2

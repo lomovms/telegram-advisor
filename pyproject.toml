@@ -1,0 +1,28 @@
+[project]
+name = "telegram-negotiation-advisor"
+version = "0.1.0"
+description = "Local Windows assistant that analyzes Telegram Desktop conversations and drafts negotiation replies."
+requires-python = ">=3.10"
+dependencies = [
+  "PySide6>=6.7",
+  "openai>=1.80.0",
+  "httpx>=0.28.0",
+  "mss>=9.0.1",
+  "Pillow>=10.0.0",
+  "pygetwindow>=0.0.9",
+  "keyboard>=0.13.5",
+  "python-dotenv>=1.0.1",
+  "beautifulsoup4>=4.12.3",
+  "pytesseract>=0.3.10",
+  "telethon>=1.36.0",
+  "qrcode>=7.4.2",
+]
+
+[project.scripts]
+pain-advisor = "pain_assistant.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

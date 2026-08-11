@@ -1,0 +1,5 @@
+node_modules/
+gateway.pid
+gateway.out.log
+gateway.err.log
+

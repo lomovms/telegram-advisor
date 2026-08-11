@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Advisor CRM</title>
+  <style>
+    :root { color-scheme:dark; --bg:#081522; --panel:#0e2131; --panel2:#0a1b29; --line:#244259; --muted:#84a4ba; --text:#edf7ff; --blue:#16a4e4; --green:#30d39a; --amber:#f4b740; --red:#ef6b73; }
+    * { box-sizing:border-box }
+    body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font:14px/1.4 Inter,Segoe UI,Arial,sans-serif }
+    button,input,select,textarea { font:inherit }
+    button { border:0; border-radius:7px; padding:10px 14px; color:#06131e; background:var(--blue); font-weight:700; cursor:pointer }
+    button:hover { filter:brightness(1.1) }
+    button.secondary { color:var(--text); border:1px solid var(--line); background:transparent }
+    button.danger { color:#ffb7bc; background:transparent; padding:6px }
+    main { max-width:1500px; margin:auto; padding:28px 24px 56px }
+    header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin-bottom:20px }
+    h1 { margin:0; font-size:27px }
+    .muted { color:var(--muted) }
+    #scan-progress { display:block; width:260px; height:6px; margin-top:7px; accent-color:var(--blue) }
+    #scan-progress[hidden] { display:none }
+    .stats { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; margin-bottom:14px }
+    .stat,.filters,.clients,.editor,.table-wrap,.leads { border:1px solid var(--line); background:var(--panel); border-radius:8px }
+    .stat { padding:12px 14px; color:var(--muted) }
+    .stat b { display:block; margin-top:2px; color:var(--text); font-size:20px }
+    .filters { display:grid; grid-template-columns:minmax(220px,1.5fr) repeat(3,minmax(140px,.7fr)) auto; gap:10px; padding:12px; margin-bottom:14px }
+    input,select,textarea { width:100%; min-width:0; color:var(--text); border:1px solid var(--line); border-radius:6px; background:#091a28; padding:9px 10px }
+    textarea { min-height:42px; resize:vertical }
+    .crm-layout { display:grid; grid-template-columns:280px minmax(0,1fr); gap:14px; align-items:start }
+    .clients { position:sticky; top:14px; max-height:calc(100vh - 28px); overflow:auto; padding:8px }
+    .clients-title { display:flex; justify-content:space-between; padding:8px 9px 11px; color:var(--muted); font-size:12px; font-weight:700; text-transform:uppercase }
+    .client { display:block; width:100%; margin:2px 0; padding:10px; text-align:left; color:var(--text); background:transparent; border:1px solid transparent; font-weight:400 }
+    .client:hover { background:#132838; filter:none }
+    .client.active { background:#17364a; border-color:#2b6687 }
+    .client strong,.client small { display:block }
+    .client strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+    .client small { margin-top:4px; color:var(--muted) }
+    .client-balance.positive { color:var(--green) }
+    .client-balance.negative { color:var(--amber) }
+    .workspace { min-width:0 }
+    .editor { margin-bottom:14px }
+    .editor summary { padding:13px 15px; cursor:pointer; font-weight:700 }
+    .form { display:grid; grid-template-columns:1.5fr 1fr repeat(4,.72fr) repeat(3,.9fr) 1fr 1.3fr auto; gap:10px; align-items:end; padding:0 14px 14px }
+    label { display:grid; gap:5px; color:var(--muted); font-size:12px }
+    .table-wrap { overflow:auto }
+    table { width:100%; border-collapse:collapse; min-width:980px }
+    th,td { padding:12px 13px; text-align:left; border-bottom:1px solid rgba(36,66,89,.7); vertical-align:top }
+    th { color:var(--muted); font-size:12px; font-weight:600 }
+    tr:last-child td { border-bottom:0 }
+    .project-title { max-width:260px; font-weight:700 }
+    .notes { min-width:230px; max-width:380px; color:var(--muted); white-space:pre-wrap; overflow-wrap:anywhere }
+    .status { display:inline-flex; padding:4px 8px; border-radius:99px; font-size:12px; font-weight:700; white-space:nowrap }
+    .planned { color:#9fc7e5; background:#1c3b50 }
+    .progress { color:#85ddff; background:#123c55 }
+    .waiting_payment { color:#ffd77e; background:#51401a }
+    .done { color:#8be6bc; background:#173f31 }
+    .completed_by_me { color:#a7efc9; background:#174436 }
+    .overdue { color:#ff9ca3; font-weight:700 }
+    .empty { text-align:center; color:var(--muted); padding:54px }
+    .leads { margin-bottom:14px; padding:13px }
+    .leads-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px }
+    .leads-head h2 { margin:0; font-size:15px }
+    .leads-head select { width:auto; min-width:180px; padding:7px 9px }
+    .lead-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:9px }
+    .lead { border:1px solid var(--line); border-left:3px solid var(--blue); border-radius:7px; background:var(--panel2); padding:11px }
+    .lead.interested { border-left-color:var(--green) }.lead.reply { border-left-color:var(--amber) }.lead.not_relevant { border-left-color:var(--muted) }
+    .lead strong,.lead small { display:block }.lead small { color:var(--muted); margin-top:3px }.lead p { margin:8px 0 0; color:#c9dce9; white-space:pre-wrap }.lead .next { color:#8fceef }
+    @media (max-width:1000px) { main { padding:18px 12px } .stats { grid-template-columns:repeat(2,1fr) } .filters { grid-template-columns:1fr 1fr } .crm-layout { grid-template-columns:1fr } .clients { position:static; max-height:300px; overflow:auto } .client { min-width:0 } .form { grid-template-columns:1fr 1fr } .form button { grid-column:span 2 } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><h1>Клиенты, проекты и оплата</h1><div class="muted">Лёгкая CRM на основе переписок</div><div class="muted" id="scan-status"></div><progress id="scan-progress" hidden></progress></div>
+      <div><button class="secondary" onclick="scan()">Найти задачи в чатах</button> <button class="secondary" onclick="load()">Обновить</button></div>
+    </header>
+    <section class="stats" id="stats"></section>
+    <section class="leads"><div class="leads-head"><h2>Лиды из почты <span class="muted" id="lead-count"></span></h2><select id="lead-filter"><option value="">Все статусы</option><option value="interested">Заинтересованы</option><option value="reply">Нужно ответить</option><option value="not_relevant">Неактуальны</option></select></div><div class="lead-list" id="lead-list"></div></section>
+    <section class="filters">
+      <input id="search" type="search" placeholder="Поиск по задаче, клиенту или заметке">
+      <select id="status-filter"><option value="">Все статусы</option><option value="planned">Запланировано</option><option value="progress">В работе</option><option value="waiting_payment">Ждёт оплаты</option><option value="completed_by_me">Сделал</option><option value="done">Готово</option></select>
+      <select id="money-filter"><option value="">Любые расчёты</option><option value="receivable">Мне должны</option><option value="payable">Я должен</option><option value="settled">Расчёты закрыты</option></select>
+      <select id="deadline-filter"><option value="">Любые сроки</option><option value="overdue">Просрочено</option><option value="week">В ближайшие 7 дней</option><option value="none">Без срока</option></select>
+      <button class="secondary" type="button" onclick="resetFilters()">Сбросить</button>
+    </section>
+    <section class="crm-layout">
+      <aside class="clients"><div class="clients-title"><span>Клиенты</span><span id="client-count"></span></div><div id="client-list"></div></aside>
+      <div class="workspace">
+        <details class="editor" id="editor"><summary>Добавить задачу вручную</summary>
+          <form class="form" id="form">
+            <input type="hidden" name="id"><label>Задача<input required name="title" placeholder="Например, лендинг для клиента"></label><label>Клиент<select name="profile_id" id="profiles"><option value="">Без клиента</option></select></label><label>Мне должны<input name="price" type="number" min="0" value="0"></label><label>Получено<input name="paid_amount" type="number" min="0" value="0"></label><label>Я должен<input name="payable" type="number" min="0" value="0"></label><label>Я заплатил<input name="paid_out" type="number" min="0" value="0"></label><label>Дедлайн<input name="deadline" type="date"></label><label>Получено дата<input name="paid_at" type="date"></label><label>Заплатил дата<input name="paid_out_at" type="date"></label><label>Статус<select name="status"><option value="planned">Запланировано</option><option value="progress">В работе</option><option value="waiting_payment">Ждёт оплаты</option><option value="completed_by_me">Сделал</option><option value="done">Готово</option></select></label><label>Заметка<textarea name="notes" placeholder="Следующий шаг, условия, ссылка"></textarea></label><button>Сохранить</button>
+          </form>
+        </details>
+        <section class="table-wrap"><table><thead><tr><th>Задача</th><th>Клиент</th><th>Статус</th><th>Дедлайн</th><th>Мне должны</th><th>Получено</th><th>Я должен</th><th>Я заплатил</th><th>Заметка</th><th></th></tr></thead><tbody id="rows"></tbody></table></section>
+      </div>
+    </section>
+  </main>
+  <script>
+    const form=document.querySelector('#form'),rows=document.querySelector('#rows'),profiles=document.querySelector('#profiles'),scanStatus=document.querySelector('#scan-status'),scanProgress=document.querySelector('#scan-progress'),search=document.querySelector('#search'),statusFilter=document.querySelector('#status-filter'),moneyFilter=document.querySelector('#money-filter'),deadlineFilter=document.querySelector('#deadline-filter'),clientList=document.querySelector('#client-list'),leadList=document.querySelector('#lead-list'),leadFilter=document.querySelector('#lead-filter'),leadCount=document.querySelector('#lead-count');
+    const focusedProfile=new URLSearchParams(location.search).get('profile'); let current=[],allProfiles=[],leads=[],activeClient=focusedProfile||'',loading=false;
+    const money=n=>new Intl.NumberFormat('ru-RU').format(Number(n||0))+' ₽';
+    const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+    const labels={planned:'Запланировано',progress:'В работе',waiting_payment:'Ждёт оплаты',completed_by_me:'Сделал',done:'Готово'};
+    const leadLabels={interested:'Заинтересован',reply:'Нужно ответить',not_relevant:'Неактуален'};
+    const owedToMe=p=>Math.max(0,Number(p.price||0)-Number(p.paid_amount||0)),iOwe=p=>Math.max(0,Number(p.payable||0)-Number(p.paid_out||0));
+    function visibleProjects(){const q=search.value.trim().toLowerCase(),today=new Date().toISOString().slice(0,10),week=new Date(Date.now()+7*864e5).toISOString().slice(0,10),closed=p=>['done','completed_by_me'].includes(p.status);return current.filter(p=>{if(activeClient&&String(p.profile_id||'none')!==activeClient)return false;if(q&&!`${p.title} ${p.client_name} ${p.notes}`.toLowerCase().includes(q))return false;if(statusFilter.value&&p.status!==statusFilter.value)return false;if(moneyFilter.value==='receivable'&&!owedToMe(p))return false;if(moneyFilter.value==='payable'&&!iOwe(p))return false;if(moneyFilter.value==='settled'&&(owedToMe(p)||iOwe(p)))return false;if(deadlineFilter.value==='overdue'&&(!p.deadline||p.deadline>=today||closed(p)))return false;if(deadlineFilter.value==='week'&&(!p.deadline||p.deadline<today||p.deadline>week||closed(p)))return false;if(deadlineFilter.value==='none'&&p.deadline)return false;return true})}
+    function renderStats(projects){const price=projects.reduce((s,p)=>s+Number(p.price||0),0),paid=projects.reduce((s,p)=>s+Number(p.paid_amount||0),0),payable=projects.reduce((s,p)=>s+Number(p.payable||0),0),paidOut=projects.reduce((s,p)=>s+Number(p.paid_out||0),0),receivable=Math.max(0,price-paid),remaining=Math.max(0,payable-paidOut);document.querySelector('#stats').innerHTML=`<div class="stat">Задач в выборке<b>${projects.length}</b></div><div class="stat">Мне должны<b>${money(receivable)}</b></div><div class="stat">Я должен<b>${money(remaining)}</b></div><div class="stat">Баланс<b>${money(receivable-remaining)}</b></div><div class="stat">Получено / заплачено<b>${money(paid)} / ${money(paidOut)}</b></div>`}
+    function clientRows(){const ids=new Set(current.map(p=>String(p.profile_id||'none'))),profilesWithProjects=allProfiles.filter(p=>ids.has(String(p.id)));if(ids.has('none'))profilesWithProjects.push({id:'none',chat_name:'Без клиента'});if(focusedProfile&&!profilesWithProjects.some(p=>String(p.id)===focusedProfile)){const focused=allProfiles.find(p=>String(p.id)===focusedProfile);if(focused)profilesWithProjects.unshift(focused)}return profilesWithProjects.sort((a,b)=>a.chat_name.localeCompare(b.chat_name,'ru'))}
+    function renderClients(){const clients=clientRows();document.querySelector('#client-count').textContent=clients.length;const card=(id,name)=>{const projects=current.filter(p=>String(p.profile_id||'none')===String(id)),balance=projects.reduce((s,p)=>s+owedToMe(p)-iOwe(p),0),open=projects.filter(p=>!['done','completed_by_me'].includes(p.status)).length;return `<button class="client ${activeClient===String(id)?'active':''}" onclick="selectClient('${id}')"><strong>${esc(name)}</strong><small>Активных: ${open} · Всего: ${projects.length}</small><small class="client-balance ${balance>=0?'positive':'negative'}">${balance>=0?'Баланс +':'Баланс '}${money(balance)}</small></button>`};clientList.innerHTML=`<button class="client ${activeClient===''?'active':''}" onclick="selectClient('')"><strong>Все клиенты</strong><small>Задач: ${current.length}</small></button>`+clients.map(p=>card(p.id,p.chat_name)).join('')}
+    function renderLeads(){const q=search.value.trim().toLowerCase(),visible=leads.filter(lead=>(!leadFilter.value||lead.status===leadFilter.value)&&(!q||`${lead.contact_name} ${lead.email} ${lead.category} ${lead.summary} ${lead.next_action}`.toLowerCase().includes(q)));leadCount.textContent=visible.length?`· ${visible.length}`:'';leadList.innerHTML=visible.length?visible.map(lead=>`<article class="lead ${lead.status}"><strong>${esc(lead.contact_name)}</strong><small>${esc(lead.email)} · ${leadLabels[lead.status]||lead.status}${lead.category?' · '+esc(lead.category):''}</small><p>${esc(lead.summary||'Суть не заполнена.')}</p>${lead.next_action?`<p class="next">Следующее: ${esc(lead.next_action)}</p>`:''}</article>`).join(''):'<p class="muted">Пока нет сохранённых лидов. В Gmail откройте контакт и нажмите «Добавить в CRM».</p>'}
+    function render(){const projects=visibleProjects(),today=new Date().toISOString().slice(0,10);renderStats(projects);renderClients();renderLeads();rows.innerHTML=projects.length?projects.map(p=>`<tr><td><div class="project-title">${esc(p.title)}</div></td><td>${esc(p.client_name||'Без клиента')}</td><td><span class="status ${p.status}">${labels[p.status]}</span></td><td class="${p.deadline&&p.deadline<today&&p.status!=='done'?'overdue':''}">${p.deadline||'—'}</td><td>${money(p.price)}</td><td>${money(p.paid_amount)}</td><td>${money(p.payable)}</td><td>${money(p.paid_out)}</td><td class="notes">${esc(p.notes||'—')}</td><td><button class="secondary" onclick="edit(${p.id})">Изм.</button><button class="danger" onclick="removeProject(${p.id})">Удалить</button></td></tr>`).join(''):'<tr><td class="empty" colspan="10">По выбранным условиям задач нет.</td></tr>'}
+    function selectClient(id){activeClient=String(id);render()}
+    function resetFilters(){activeClient='';search.value='';statusFilter.value='';moneyFilter.value='';deadlineFilter.value='';leadFilter.value='';render()}
+    async function load(){if(loading)return;loading=true;const selectedProfile=profiles.value;try{const data=await fetch('/api/projects').then(r=>r.json());current=data.projects;leads=data.leads||[];allProfiles=data.profiles;profiles.innerHTML='<option value="">Без клиента</option>'+allProfiles.map(p=>`<option value="${p.id}">${esc(p.chat_name)}</option>`).join('');profiles.value=selectedProfile;render()}finally{loading=false}}
+    async function scan(){if(!confirm('ИИ проверит рабочие Telegram-чаты за последние 31 день и добавит подтверждённые задачи. Продолжить?'))return;const r=await fetch('/api/projects/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:20})}),data=await r.json();if(!r.ok)return alert(data.error||'Не удалось проверить чаты');await load();alert(`Проверено чатов: ${data.reviewed}. Добавлено задач: ${data.projects.length}.`)}
+    function edit(id){const p=current.find(x=>x.id===id);for(const [key,value] of Object.entries(p)){const field=form.elements.namedItem(key);if(field)field.value=value??''}document.querySelector('#editor').open=true;window.scrollTo({top:0,behavior:'smooth'})}
+    async function removeProject(id){if(!confirm('Удалить проект?'))return;await fetch('/api/projects/'+id,{method:'DELETE'});await load()}
+    async function loadStatus(){if(!focusedProfile)return;const r=await fetch('/api/profiles/'+focusedProfile+'/project-status');if(!r.ok)return;const status=await r.json();scanStatus.textContent=status.state==='idle'?'':status.message;const active=['history','running','analysis'].includes(status.state);scanProgress.hidden=!active;if(status.total){scanProgress.max=status.total;scanProgress.value=status.current||0}else scanProgress.removeAttribute('value')}
+    [search,statusFilter,moneyFilter,deadlineFilter,leadFilter].forEach(control=>control.addEventListener('input',render));
+    form.addEventListener('submit',async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(form)),r=await fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),payload=await r.json();if(!r.ok)return alert(payload.error||'Не удалось сохранить');form.reset();form.elements.id.value='';document.querySelector('#editor').open=false;await load()});
+    load();loadStatus();setInterval(()=>{if(document.visibilityState==='visible'){load();loadStatus()}},2000);
+  </script>
+</body>
+</html>
